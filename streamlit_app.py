@@ -12,7 +12,6 @@ import sqlite3
 from datetime import datetime, timedelta
 import numpy as np
 from anthropic import Anthropic
-import streamlit as st
 import hashlib
 
 def check_password():
@@ -890,21 +889,21 @@ def show_questions_page(df, conn):
     - "What's my win rate by product?"
     - "Find patterns in my weekend trading"
     """)
-    
-   # API Key - check secrets first, then allow manual entry
-api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
 
-if not api_key:
-    st.info("💡 Admin: Add ANTHROPIC_API_KEY to Streamlit Secrets to enable automatic queries")
-    api_key = st.text_input("Or enter Claude API Key manually", 
-                           type="password",
-                           help="Get your API key from console.anthropic.com")
-else:
-    st.success("✅ Claude API connected (using stored key)")
-    
+    # API Key - check secrets first, then allow manual entry
+    api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+
+    if not api_key:
+        st.info("💡 Admin: Add ANTHROPIC_API_KEY to Streamlit Secrets to enable automatic queries")
+        api_key = st.text_input("Or enter Claude API Key manually",
+                               type="password",
+                               help="Get your API key from console.anthropic.com")
+    else:
+        st.success("✅ Claude API connected (using stored key)")
+
     # Question input
     question = st.text_area("Your Question:", height=100)
-    
+
     if st.button("Ask Claude", type="primary"):
         if not api_key:
             st.warning("Please enter your Claude API key to use natural language queries")
@@ -915,43 +914,50 @@ else:
                 response = query_with_claude(question, df, api_key)
                 st.markdown("### Response:")
                 st.markdown(response)
-    
+
     st.markdown("---")
-    
+
     # Quick stats for manual exploration
     st.subheader("Quick Data Exploration")
-    
+
     # Show random sample
     if st.button("Show Random Sample (10 rows)"):
         st.dataframe(df.sample(min(10, len(df))))
-    
+
     # Export options
     st.subheader("Export Data")
-    
+
     col1, col2 = st.columns(2)
-    
+
     with col1:
-        csv = df.to_csv(index=False)
-        st.download_button(
-            label="Download Filtered Data as CSV",
-            data=csv,
-            file_name=f"trading_data_export_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv"
-        )
-    
-    with col2:
-        if 'realised_pnl' in df.columns:
-            summary_df = df.groupby('product').agg({
-                'product': 'count',
-                'realised_pnl': ['sum', 'mean']
-            }).reset_index()
-            summary_csv = summary_df.to_csv(index=False)
+        # Create CSV from the dataframe passed to this function
+        try:
+            csv_data = df.to_csv(index=False)
             st.download_button(
-                label="Download Product Summary",
-                data=summary_csv,
-                file_name=f"product_summary_{datetime.now().strftime('%Y%m%d')}.csv",
+                label="Download Filtered Data as CSV",
+                data=csv_data,
+                file_name=f"trading_data_export_{datetime.now().strftime('%Y%m%d')}.csv",
                 mime="text/csv"
             )
+        except NameError:
+            st.error("Data not available for export")
+
+    with col2:
+        if 'realised_pnl' in df.columns:
+            try:
+                summary_df = df.groupby('product').agg({
+                    'product': 'count',
+                    'realised_pnl': ['sum', 'mean']
+                }).reset_index()
+                summary_csv = summary_df.to_csv(index=False)
+                st.download_button(
+                    label="Download Product Summary",
+                    data=summary_csv,
+                    file_name=f"product_summary_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv"
+                )
+            except Exception as e:
+                st.error(f"Cannot create product summary: {e}")
 
 
 if __name__ == "__main__":
