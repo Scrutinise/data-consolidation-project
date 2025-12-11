@@ -41,7 +41,7 @@ def check_password():
 # Add this right after the function definition
 if not check_password():
     st.stop()  # Don't run the rest of the app
-    
+
 # Page config
 st.set_page_config(
     page_title="Trading Analysis Dashboard",
@@ -891,10 +891,16 @@ def show_questions_page(df, conn):
     - "Find patterns in my weekend trading"
     """)
     
-    # API Key input
-    api_key = st.text_input("Enter Claude API Key (optional - for natural language queries)", 
+   # API Key - check secrets first, then allow manual entry
+api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+
+if not api_key:
+    st.info("💡 Admin: Add ANTHROPIC_API_KEY to Streamlit Secrets to enable automatic queries")
+    api_key = st.text_input("Or enter Claude API Key manually", 
                            type="password",
                            help="Get your API key from console.anthropic.com")
+else:
+    st.success("✅ Claude API connected (using stored key)")
     
     # Question input
     question = st.text_area("Your Question:", height=100)
