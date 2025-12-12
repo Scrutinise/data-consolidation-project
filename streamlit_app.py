@@ -893,157 +893,627 @@ def show_product_analysis_page(df):
 
 
 def show_questions_page(df, conn):
-    """Display natural language query page with conversation history"""
+    """Display enhanced query page with SQL executor and visual query builder"""
     st.header("💬 Ask Questions About Your Data")
 
-    # Initialize conversation history in session state
+    # Initialize session state
     if 'conversation_history' not in st.session_state:
         st.session_state.conversation_history = []
+    if 'query_history' not in st.session_state:
+        st.session_state.query_history = []
+    if 'last_sql' not in st.session_state:
+        st.session_state.last_sql = ""
+    if 'last_results' not in st.session_state:
+        st.session_state.last_results = None
 
-    st.markdown("""
-    Ask natural language questions about your trading data to get insights and analysis.
+    # Create tabs for different query methods
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "💬 Natural Language",
+        "🔍 SQL Executor",
+        "📊 Visual Query Builder",
+        "📚 Query Library"
+    ])
 
-    **💡 What Claude can help with:**
-    - ✅ Querying data: "What was my most profitable month?"
-    - ✅ Finding patterns: "Show me trades where I lost more than £500"
-    - ✅ Analysis: "What's my win rate on GBP/JPY?"
-    - ✅ SQL queries: "Find patterns in my weekend trading"
+    # =========================================================================
+    # TAB 1: NATURAL LANGUAGE QUESTIONS (Enhanced)
+    # =========================================================================
+    with tab1:
+        st.markdown("""
+        Ask questions in plain English and Claude will analyze your trading data.
 
-    **⚠️ What Claude cannot do:**
-    - ❌ Modify existing charts in the dashboard
-    - ❌ Create new visualizations
-    - ❌ Change the app layout or features
+        **Examples:**
+        - "What was my most profitable month?"
+        - "Show me all GBP/JPY trades where I lost more than £500"
+        - "Which products have the best win rate?"
+        - "Find patterns in my weekend trading"
+        """)
 
-    **For chart changes:** Contact the person who shared this dashboard!
+        # API Key check
+        api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
 
-    **Example questions:**
-    """)
-
-    st.markdown("""
-    - "What was my most profitable month?"
-    - "Show me all trades on GBP/JPY where I lost more than £500"
-    - "What's my win rate by product?"
-    - "Find patterns in my weekend trading"
-    - "Which account performed best in 2024?"
-    - "Am I trading more on weekends or weekdays?"
-    """)
-
-    # API Key - check secrets first, then allow manual entry
-    api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
-
-    if not api_key:
-        st.info("💡 Admin: Add ANTHROPIC_API_KEY to Streamlit Secrets to enable automatic queries")
-        api_key = st.text_input("Or enter Claude API Key manually",
-                               type="password",
-                               help="Get your API key from console.anthropic.com")
-    else:
-        st.success("✅ Claude API connected (using stored key)")
-
-    # Question input
-    question = st.text_area("Your Question:", height=100, key="question_input")
-
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        ask_button = st.button("Ask Claude", type="primary")
-    with col2:
-        if st.button("Clear History"):
-            st.session_state.conversation_history = []
-            st.rerun()
-
-    if ask_button:
         if not api_key:
-            st.warning("Please enter your Claude API key to use natural language queries")
-        elif not question:
-            st.warning("Please enter a question")
+            st.info("💡 Admin: Add ANTHROPIC_API_KEY to Streamlit Secrets for automatic queries")
+            api_key = st.text_input("Or enter Claude API Key manually",
+                                   type="password",
+                                   help="Get your API key from console.anthropic.com")
         else:
-            with st.spinner("Analyzing your data..."):
-                response = query_with_claude(question, df, api_key)
+            st.success("✅ Claude API connected")
+
+        # Question input
+        question = st.text_area("Your Question:", height=100, key="nl_question")
+
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            ask_button = st.button("Ask Claude", type="primary")
+        with col2:
+            if st.button("Clear History"):
+                st.session_state.conversation_history = []
+                st.rerun()
+
+        if ask_button:
+            if not api_key:
+                st.warning("Please enter your Claude API key")
+            elif not question:
+                st.warning("Please enter a question")
+            else:
+                with st.spinner("Analyzing your data..."):
+                    response = query_with_claude(question, df, api_key)
+
+                    # Save to history
+                    st.session_state.conversation_history.append({
+                        'question': question,
+                        'response': response,
+                        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    })
+
+                    st.markdown("### 💬 Response:")
+                    st.markdown(response)
+
+                    # Extract SQL if present in response
+                    import re
+                    sql_match = re.search(r'```sql\n(.*?)\n```', response, re.DOTALL)
+                    if sql_match:
+                        extracted_sql = sql_match.group(1).strip()
+                        st.session_state.last_sql = extracted_sql
+
+                        st.markdown("---")
+                        st.markdown("**SQL Query Found in Response:**")
+                        st.code(extracted_sql, language="sql")
+
+                        if st.button("🚀 Run This Query", key="run_extracted_sql"):
+                            try:
+                                result_df = pd.read_sql_query(extracted_sql, conn)
+                                st.session_state.last_results = result_df
+                                st.success(f"✅ Query executed! {len(result_df)} rows returned")
+                                st.dataframe(result_df, use_container_width=True)
+
+                                # Download button
+                                csv = result_df.to_csv(index=False)
+                                st.download_button(
+                                    "💾 Download Results",
+                                    csv,
+                                    f"query_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                    "text/csv"
+                                )
+                            except Exception as e:
+                                st.error(f"Error executing query: {str(e)}")
+
+                    # Cost estimate
+                    estimated_cost = (len(question) + len(response)) / 1000 * 0.003
+                    st.caption(f"💰 Estimated cost: ~${estimated_cost:.4f}")
+
+        # Display conversation history
+        if st.session_state.conversation_history:
+            st.markdown("---")
+            st.subheader("📜 Recent Questions")
+
+            for i, item in enumerate(reversed(st.session_state.conversation_history[-5:])):
+                with st.expander(f"🕐 {item['timestamp']} - {item['question'][:60]}..."):
+                    st.markdown(f"**Q:** {item['question']}")
+                    st.markdown("**A:**")
+                    st.markdown(item['response'])
+
+    # =========================================================================
+    # TAB 2: DIRECT SQL EXECUTOR
+    # =========================================================================
+    with tab2:
+        st.markdown("""
+        Execute SQL queries directly against your trading database.
+
+        **💡 Tips:**
+        - Table name is `trades`
+        - Common columns: `transaction_datetime`, `product`, `realised_pnl`, `trade_value`, `account_id`
+        - Use `LIMIT` to prevent huge results
+        """)
+
+        # SQL input with syntax highlighting
+        sql_query = st.text_area(
+            "SQL Query:",
+            value=st.session_state.last_sql,
+            height=150,
+            help="Enter your SQL query here",
+            key="direct_sql"
+        )
+
+        col1, col2, col3 = st.columns([2, 2, 3])
+
+        with col1:
+            execute_btn = st.button("🔍 Execute Query", type="primary")
+
+        with col2:
+            if st.button("📋 Copy From Above"):
+                st.session_state.last_sql = sql_query
+                st.rerun()
+
+        with col3:
+            if st.button("💾 Save to Library"):
+                query_name = st.text_input("Query name:", key="save_query_name")
+                if query_name:
+                    # Save to session state (in real app, would save to database)
+                    if 'saved_queries' not in st.session_state:
+                        st.session_state.saved_queries = {}
+                    st.session_state.saved_queries[query_name] = sql_query
+                    st.success(f"Saved '{query_name}'!")
+
+        if execute_btn and sql_query.strip():
+            try:
+                # Execute query
+                result_df = pd.read_sql_query(sql_query, conn)
 
                 # Save to history
-                st.session_state.conversation_history.append({
-                    'question': question,
-                    'response': response,
-                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                st.session_state.query_history.append({
+                    'sql': sql_query,
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'rows': len(result_df)
                 })
 
-                st.markdown("### 💬 Response:")
-                st.markdown(response)
+                st.session_state.last_results = result_df
 
-                # Show token usage estimate
-                estimated_cost = (len(question) + len(response)) / 1000 * 0.003  # Rough estimate
-                st.caption(f"💰 Estimated cost: ~${estimated_cost:.4f}")
+                # Display results
+                st.success(f"✅ Query executed successfully! {len(result_df)} rows returned")
 
-    # Display conversation history
-    if st.session_state.conversation_history:
-        st.markdown("---")
-        st.subheader("📜 Conversation History")
+                # Show first few rows
+                st.dataframe(result_df, use_container_width=True, height=400)
 
-        # Show most recent first
-        for i, item in enumerate(reversed(st.session_state.conversation_history)):
-            # Calculate original index for deletion
-            original_index = len(st.session_state.conversation_history) - 1 - i
-
-            timestamp = item['timestamp']
-            question_text = item['question']
-            response_text = item['response']
-
-            with st.expander(f"🕐 {timestamp} - {question_text[:60]}{'...' if len(question_text) > 60 else ''}"):
-                st.markdown(f"**Question:** {question_text}")
-                st.markdown("**Answer:**")
-                st.markdown(response_text)
-
-                # Delete button for individual conversation
-                if st.button("🗑️ Delete this conversation", key=f"delete_{original_index}"):
-                    st.session_state.conversation_history.pop(original_index)
-                    st.rerun()
-
-    st.markdown("---")
-
-    # Quick stats for manual exploration
-    st.subheader("Quick Data Exploration")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        if st.button("Show Random Sample (10 rows)"):
-            st.dataframe(df.sample(min(10, len(df))))
-
-    with col2:
-        st.metric("Total Rows in Dataset", f"{len(df):,}")
-
-    # Export options
-    st.subheader("Export Data")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        try:
-            csv_data = df.to_csv(index=False)
-            st.download_button(
-                label="📥 Download Filtered Data as CSV",
-                data=csv_data,
-                file_name=f"trading_data_export_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv"
-            )
-        except Exception as e:
-            st.error(f"Cannot export data: {e}")
-
-    with col2:
-        if 'realised_pnl' in df.columns:
-            try:
-                summary_df = df.groupby('product').agg({
-                    'product': 'count',
-                    'realised_pnl': ['sum', 'mean']
-                }).reset_index()
-                summary_csv = summary_df.to_csv(index=False)
+                # Download button
+                csv = result_df.to_csv(index=False)
                 st.download_button(
-                    label="📥 Download Product Summary",
-                    data=summary_csv,
-                    file_name=f"product_summary_{datetime.now().strftime('%Y%m%d')}.csv",
-                    mime="text/csv"
+                    "💾 Download Full Results as CSV",
+                    csv,
+                    f"query_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    "text/csv",
+                    key="download_sql_results"
                 )
+
+                # Quick stats
+                st.markdown("**Quick Stats:**")
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Rows", len(result_df))
+                col2.metric("Columns", len(result_df.columns))
+                col3.metric("Memory", f"{result_df.memory_usage(deep=True).sum() / 1024:.1f} KB")
+
             except Exception as e:
-                st.error(f"Cannot create product summary: {e}")
+                st.error(f"❌ Query Error: {str(e)}")
+                st.info("Check your SQL syntax and table/column names")
+
+        # Query history
+        if st.session_state.query_history:
+            st.markdown("---")
+            st.subheader("📜 Query History")
+
+            for i, query in enumerate(reversed(st.session_state.query_history[-10:])):
+                with st.expander(f"🕐 {query['timestamp']} - {query['rows']} rows"):
+                    st.code(query['sql'], language="sql")
+                    if st.button(f"Re-run", key=f"rerun_{i}"):
+                        st.session_state.last_sql = query['sql']
+                        st.rerun()
+
+    # =========================================================================
+    # TAB 3: VISUAL QUERY BUILDER
+    # =========================================================================
+    with tab3:
+        st.markdown("""
+        Build queries visually - no SQL knowledge required!
+        Select columns, add filters, and Claude will generate the SQL for you.
+        """)
+
+        # Available columns from the trades table
+        all_columns = {
+            'transaction_datetime': 'Date/Time',
+            'product': 'Product',
+            'realised_pnl': 'Realized P&L',
+            'trade_value': 'Trade Value',
+            'account_id': 'Account ID',
+            'type': 'Transaction Type',
+            'amt_per_point': 'Amount per Point',
+            'trade_price': 'Trade Price',
+            'quantity': 'Quantity',
+            'direction': 'Direction',
+            'order_id': 'Order ID',
+            'trade_id': 'Trade ID',
+            'cf_balance': 'Cash Balance'
+        }
+
+        st.subheader("1️⃣ Select Columns to Display")
+
+        # Column selection with friendly names
+        col1, col2, col3, col4 = st.columns(4)
+
+        selected_columns = []
+
+        with col1:
+            if st.checkbox("Date/Time", value=True, key="col_datetime"):
+                selected_columns.append('transaction_datetime')
+            if st.checkbox("Product", value=True, key="col_product"):
+                selected_columns.append('product')
+            if st.checkbox("P&L", value=True, key="col_pnl"):
+                selected_columns.append('realised_pnl')
+
+        with col2:
+            if st.checkbox("Trade Value", value=False, key="col_value"):
+                selected_columns.append('trade_value')
+            if st.checkbox("Account ID", value=False, key="col_account"):
+                selected_columns.append('account_id')
+            if st.checkbox("Type", value=False, key="col_type"):
+                selected_columns.append('type')
+
+        with col3:
+            if st.checkbox("Amt/Point", value=False, key="col_amt"):
+                selected_columns.append('amt_per_point')
+            if st.checkbox("Trade Price", value=False, key="col_price"):
+                selected_columns.append('trade_price')
+            if st.checkbox("Quantity", value=False, key="col_qty"):
+                selected_columns.append('quantity')
+
+        with col4:
+            if st.checkbox("Direction", value=False, key="col_dir"):
+                selected_columns.append('direction')
+            if st.checkbox("Order ID", value=False, key="col_order"):
+                selected_columns.append('order_id')
+            if st.checkbox("Cash Balance", value=False, key="col_balance"):
+                selected_columns.append('cf_balance')
+
+        if not selected_columns:
+            st.warning("⚠️ Please select at least one column")
+            selected_columns = ['transaction_datetime', 'product', 'realised_pnl']
+
+        st.markdown("---")
+        st.subheader("2️⃣ Add Filters (Optional)")
+
+        # Initialize filters in session state
+        if 'visual_filters' not in st.session_state:
+            st.session_state.visual_filters = []
+
+        # Add filter button
+        if st.button("➕ Add Filter"):
+            st.session_state.visual_filters.append({
+                'column': 'product',
+                'operator': 'equals',
+                'value': ''
+            })
+
+        # Display existing filters
+        filters_to_remove = []
+        for i, filter_def in enumerate(st.session_state.visual_filters):
+            col1, col2, col3, col4 = st.columns([3, 2, 3, 1])
+
+            with col1:
+                filter_column = st.selectbox(
+                    "Column",
+                    options=list(all_columns.keys()),
+                    format_func=lambda x: all_columns[x],
+                    key=f"filter_col_{i}",
+                    index=list(all_columns.keys()).index(filter_def['column'])
+                )
+
+            with col2:
+                filter_operator = st.selectbox(
+                    "Condition",
+                    options=['equals', 'not equals', 'greater than', 'less than', 'contains', 'starts with'],
+                    key=f"filter_op_{i}",
+                    index=['equals', 'not equals', 'greater than', 'less than', 'contains', 'starts with'].index(filter_def['operator'])
+                )
+
+            with col3:
+                filter_value = st.text_input(
+                    "Value",
+                    value=filter_def['value'],
+                    key=f"filter_val_{i}"
+                )
+
+            with col4:
+                if st.button("🗑️", key=f"remove_filter_{i}"):
+                    filters_to_remove.append(i)
+
+            # Update filter definition
+            st.session_state.visual_filters[i] = {
+                'column': filter_column,
+                'operator': filter_operator,
+                'value': filter_value
+            }
+
+        # Remove filters marked for deletion
+        for i in reversed(filters_to_remove):
+            st.session_state.visual_filters.pop(i)
+
+        st.markdown("---")
+        st.subheader("3️⃣ Sort & Limit")
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            sort_column = st.selectbox(
+                "Sort by",
+                options=selected_columns,
+                format_func=lambda x: all_columns.get(x, x),
+                key="sort_col"
+            )
+
+        with col2:
+            sort_order = st.selectbox(
+                "Order",
+                options=['DESC', 'ASC'],
+                format_func=lambda x: 'Newest First' if x == 'DESC' else 'Oldest First',
+                key="sort_order"
+            )
+
+        with col3:
+            limit = st.number_input(
+                "Limit rows",
+                min_value=10,
+                max_value=10000,
+                value=100,
+                step=10,
+                key="limit"
+            )
+
+        st.markdown("---")
+
+        # Generate SQL
+        def generate_sql(columns, filters, sort_col, sort_order, limit):
+            """Generate SQL from visual query builder"""
+            # SELECT clause
+            sql = f"SELECT {', '.join(columns)}\n"
+            sql += "FROM trades\n"
+
+            # WHERE clause
+            if filters:
+                where_clauses = []
+                for f in filters:
+                    col = f['column']
+                    op = f['operator']
+                    val = f['value']
+
+                    if not val:  # Skip empty filters
+                        continue
+
+                    if op == 'equals':
+                        where_clauses.append(f"{col} = '{val}'")
+                    elif op == 'not equals':
+                        where_clauses.append(f"{col} != '{val}'")
+                    elif op == 'greater than':
+                        where_clauses.append(f"{col} > {val}")
+                    elif op == 'less than':
+                        where_clauses.append(f"{col} < {val}")
+                    elif op == 'contains':
+                        where_clauses.append(f"{col} LIKE '%{val}%'")
+                    elif op == 'starts with':
+                        where_clauses.append(f"{col} LIKE '{val}%'")
+
+                if where_clauses:
+                    sql += "WHERE " + " AND ".join(where_clauses) + "\n"
+
+            # ORDER BY clause
+            sql += f"ORDER BY {sort_col} {sort_order}\n"
+
+            # LIMIT clause
+            sql += f"LIMIT {limit};"
+
+            return sql
+
+        generated_sql = generate_sql(
+            selected_columns,
+            st.session_state.visual_filters,
+            sort_column,
+            sort_order,
+            limit
+        )
+
+        st.subheader("4️⃣ Generated SQL")
+        st.code(generated_sql, language="sql")
+
+        col1, col2 = st.columns([1, 3])
+
+        with col1:
+            run_visual_query = st.button("🚀 Run Query", type="primary", key="run_visual")
+
+        with col2:
+            if st.button("📋 Copy to SQL Executor"):
+                st.session_state.last_sql = generated_sql
+                st.success("✅ Copied to SQL Executor tab!")
+
+        if run_visual_query:
+            try:
+                result_df = pd.read_sql_query(generated_sql, conn)
+                st.success(f"✅ {len(result_df)} rows returned")
+
+                st.dataframe(result_df, use_container_width=True, height=400)
+
+                # Download
+                csv = result_df.to_csv(index=False)
+                st.download_button(
+                    "💾 Download Results",
+                    csv,
+                    f"visual_query_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    "text/csv",
+                    key="download_visual_results"
+                )
+
+            except Exception as e:
+                st.error(f"❌ Error: {str(e)}")
+
+    # =========================================================================
+    # TAB 4: QUERY LIBRARY (Templates)
+    # =========================================================================
+    with tab4:
+        st.markdown("""
+        Pre-built queries for common analysis tasks.
+        Click any query to load it into the SQL Executor.
+        """)
+
+        # Predefined query templates
+        query_templates = {
+            "Top 10 Profitable Trades": """
+SELECT
+    transaction_datetime,
+    product,
+    realised_pnl,
+    trade_value,
+    account_id
+FROM trades
+WHERE realised_pnl > 0
+ORDER BY realised_pnl DESC
+LIMIT 10;
+""",
+            "Top 10 Losing Trades": """
+SELECT
+    transaction_datetime,
+    product,
+    realised_pnl,
+    trade_value,
+    account_id
+FROM trades
+WHERE realised_pnl < 0
+ORDER BY realised_pnl ASC
+LIMIT 10;
+""",
+            "Monthly P&L Summary": """
+SELECT
+    strftime('%Y-%m', transaction_datetime) as month,
+    COUNT(*) as total_trades,
+    SUM(CASE WHEN realised_pnl > 0 THEN 1 ELSE 0 END) as wins,
+    SUM(CASE WHEN realised_pnl < 0 THEN 1 ELSE 0 END) as losses,
+    ROUND(SUM(realised_pnl), 2) as total_pnl,
+    ROUND(AVG(realised_pnl), 2) as avg_pnl
+FROM trades
+WHERE realised_pnl IS NOT NULL
+GROUP BY month
+ORDER BY month DESC
+LIMIT 12;
+""",
+            "Product Performance Summary": """
+SELECT
+    product,
+    COUNT(*) as total_trades,
+    ROUND(SUM(CASE WHEN realised_pnl > 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) as win_rate,
+    ROUND(SUM(realised_pnl), 2) as total_pnl,
+    ROUND(AVG(realised_pnl), 2) as avg_pnl,
+    ROUND(MAX(realised_pnl), 2) as best_trade,
+    ROUND(MIN(realised_pnl), 2) as worst_trade
+FROM trades
+WHERE realised_pnl IS NOT NULL
+GROUP BY product
+ORDER BY total_pnl DESC
+LIMIT 20;
+""",
+            "Weekend Trading Activity": """
+SELECT
+    strftime('%w', transaction_datetime) as day_of_week,
+    CASE strftime('%w', transaction_datetime)
+        WHEN '0' THEN 'Sunday'
+        WHEN '1' THEN 'Monday'
+        WHEN '2' THEN 'Tuesday'
+        WHEN '3' THEN 'Wednesday'
+        WHEN '4' THEN 'Thursday'
+        WHEN '5' THEN 'Friday'
+        WHEN '6' THEN 'Saturday'
+    END as day_name,
+    COUNT(*) as total_trades,
+    ROUND(SUM(realised_pnl), 2) as total_pnl
+FROM trades
+WHERE realised_pnl IS NOT NULL
+GROUP BY day_of_week
+ORDER BY day_of_week;
+""",
+            "Recent 100 Trades": """
+SELECT
+    transaction_datetime,
+    product,
+    type,
+    realised_pnl,
+    trade_value,
+    account_id
+FROM trades
+ORDER BY transaction_datetime DESC
+LIMIT 100;
+""",
+            "Largest Trades by Value": """
+SELECT
+    transaction_datetime,
+    product,
+    trade_value,
+    realised_pnl,
+    account_id
+FROM trades
+WHERE trade_value IS NOT NULL
+ORDER BY ABS(trade_value) DESC
+LIMIT 20;
+""",
+            "Account Comparison": """
+SELECT
+    account_id,
+    COUNT(*) as total_trades,
+    ROUND(SUM(realised_pnl), 2) as total_pnl,
+    ROUND(AVG(realised_pnl), 2) as avg_pnl,
+    MIN(transaction_datetime) as first_trade,
+    MAX(transaction_datetime) as last_trade
+FROM trades
+WHERE account_id IS NOT NULL
+GROUP BY account_id
+ORDER BY total_trades DESC;
+"""
+        }
+
+        # Display templates in cards
+        for template_name, template_sql in query_templates.items():
+            with st.expander(f"📊 {template_name}"):
+                st.code(template_sql, language="sql")
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button(f"🚀 Run This Query", key=f"run_{template_name}"):
+                        try:
+                            result_df = pd.read_sql_query(template_sql, conn)
+                            st.success(f"✅ {len(result_df)} rows")
+                            st.dataframe(result_df, use_container_width=True)
+
+                            csv = result_df.to_csv(index=False)
+                            st.download_button(
+                                "💾 Download",
+                                csv,
+                                f"{template_name.lower().replace(' ', '_')}.csv",
+                                key=f"dl_{template_name}"
+                            )
+                        except Exception as e:
+                            st.error(f"Error: {str(e)}")
+
+                with col2:
+                    if st.button(f"📋 Copy to Editor", key=f"copy_{template_name}"):
+                        st.session_state.last_sql = template_sql
+                        st.success("✅ Copied to SQL Executor!")
+
+        # User saved queries
+        if 'saved_queries' in st.session_state and st.session_state.saved_queries:
+            st.markdown("---")
+            st.subheader("💾 Your Saved Queries")
+
+            for name, sql in st.session_state.saved_queries.items():
+                with st.expander(f"⭐ {name}"):
+                    st.code(sql, language="sql")
+                    if st.button(f"Run", key=f"run_saved_{name}"):
+                        st.session_state.last_sql = sql
+                        st.rerun()
+
 
 
 if __name__ == "__main__":
