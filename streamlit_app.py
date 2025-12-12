@@ -12,6 +12,7 @@ import sqlite3
 from datetime import datetime, timedelta
 import numpy as np
 from anthropic import Anthropic
+import streamlit as st
 import hashlib
 
 def check_password():
@@ -274,18 +275,14 @@ def create_deposits_withdrawals_chart(dw_df):
     """Create deposits vs withdrawals chart - withdrawals shown as negative bars"""
     if dw_df.empty:
         return None
-
+    
     fig = go.Figure()
-
+    
     # Separate deposits and withdrawals
     deposits = dw_df[dw_df['trade_value'] > 0]
     withdrawals = dw_df[dw_df['trade_value'] < 0]
-
-    # Get max deposit for Y-axis range (symmetric around zero)
-    max_deposit = deposits['trade_value'].max() if len(deposits) > 0 else 1000
-    max_withdrawal = withdrawals['trade_value'].min() if len(withdrawals) > 0 else -1000
-    max_range = max(abs(max_deposit), abs(max_withdrawal))
-
+    
+    # Add deposits (green bars going UP)
     fig.add_trace(go.Bar(
         x=deposits['transaction_datetime'],
         y=deposits['trade_value'],
@@ -294,41 +291,37 @@ def create_deposits_withdrawals_chart(dw_df):
         opacity=0.7,
         hovertemplate='<b>Deposit</b><br>Date: %{x}<br>Amount: £%{y:,.2f}<extra></extra>'
     ))
-
+    
+    # Add withdrawals (red bars going DOWN - negative values)
     fig.add_trace(go.Bar(
         x=withdrawals['transaction_datetime'],
-        y=withdrawals['trade_value'],  # Keep negative - bars go below X-axis
+        y=withdrawals['trade_value'],  # Keep negative - bars go down
         name='Withdrawals',
         marker_color='red',
         opacity=0.7,
         hovertemplate='<b>Withdrawal</b><br>Date: %{x}<br>Amount: £%{y:,.2f}<extra></extra>'
     ))
-
+    
     fig.update_layout(
         title="Deposits and Withdrawals Over Time",
         xaxis_title="Date",
         yaxis_title="Amount (£)",
         barmode='overlay',
         hovermode='closest',
-        height=400,
+        height=500,
         yaxis=dict(
-            range=[-max_range * 1.1, max_range * 1.1],  # Symmetric range with 10% padding
+            range=[-5000, 5000],  # FIXED: -£5,000 to +£5,000
             zeroline=True,
-            zerolinewidth=2,
+            zerolinewidth=3,
             zerolinecolor='black',
-            tickformat='£,.0f'
+            gridcolor='lightgray',
+            tickformat=',.0f',
+            tickprefix='£'
         ),
-        showlegend=True,
-        legend=dict(
-            yanchor="top",
-            y=0.99,
-            xanchor="left",
-            x=0.01
-        )
+        showlegend=True
     )
-
+    
     return fig
-
 
 def create_stake_size_chart(stake_df):
     """Create stake size progression chart"""
@@ -900,64 +893,32 @@ def show_product_analysis_page(df):
 
 
 def show_questions_page(df, conn):
-    """Display natural language query page with conversation history"""
+    """Display natural language query page"""
     st.header("💬 Ask Questions About Your Data")
-
-    # Initialize conversation history in session state
-    if 'conversation_history' not in st.session_state:
-        st.session_state.conversation_history = []
-
+    
     st.markdown("""
-    Ask natural language questions about your trading data to get insights and analysis.
-
-    **💡 What Claude can help with:**
-    - ✅ Querying data: "What was my most profitable month?"
-    - ✅ Finding patterns: "Show me trades where I lost more than £500"
-    - ✅ Analysis: "What's my win rate on GBP/JPY?"
-    - ✅ SQL queries: "Find patterns in my weekend trading"
-
-    **⚠️ What Claude cannot do:**
-    - ❌ Modify existing charts in the dashboard
-    - ❌ Create new visualizations
-    - ❌ Change the app layout or features
-
-    **For chart changes:** Contact the person who shared this dashboard!
-
-    **Example questions:**
-    """)
-
-    st.markdown("""
+    Ask natural language questions about your trading data. Examples:
     - "What was my most profitable month?"
     - "Show me all trades on GBP/JPY where I lost more than £500"
     - "What's my win rate by product?"
     - "Find patterns in my weekend trading"
-    - "Which account performed best in 2024?"
-    - "Am I trading more on weekends or weekdays?"
     """)
+    
+   # API Key - check secrets first, then allow manual entry
+api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
 
-    # API Key - check secrets first, then allow manual entry
-    api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
-
-    if not api_key:
-        st.info("💡 Admin: Add ANTHROPIC_API_KEY to Streamlit Secrets to enable automatic queries")
-        api_key = st.text_input("Or enter Claude API Key manually",
-                               type="password",
-                               help="Get your API key from console.anthropic.com")
-    else:
-        st.success("✅ Claude API connected (using stored key)")
+if not api_key:
+    st.info("💡 Admin: Add ANTHROPIC_API_KEY to Streamlit Secrets to enable automatic queries")
+    api_key = st.text_input("Or enter Claude API Key manually", 
+                           type="password",
+                           help="Get your API key from console.anthropic.com")
+else:
+    st.success("✅ Claude API connected (using stored key)")
 
     # Question input
-    question = st.text_area("Your Question:", height=100, key="question_input")
-
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        ask_button = st.button("Ask Claude", type="primary")
-    with col2:
-        if st.button("Clear History"):
-            st.session_state.conversation_history = []
-            st.rerun()
-
-    if ask_button:
+    question = st.text_area("Your Question:", height=100)
+    
+    if st.button("Ask Claude", type="primary"):
         if not api_key:
             st.warning("Please enter your Claude API key to use natural language queries")
         elif not question:
@@ -965,92 +926,52 @@ def show_questions_page(df, conn):
         else:
             with st.spinner("Analyzing your data..."):
                 response = query_with_claude(question, df, api_key)
-
-                # Save to history
-                st.session_state.conversation_history.append({
-                    'question': question,
-                    'response': response,
-                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                })
-
-                st.markdown("### 💬 Response:")
+                st.markdown("### Response:")
                 st.markdown(response)
-
-                # Show token usage estimate
-                estimated_cost = (len(question) + len(response)) / 1000 * 0.003  # Rough estimate
-                st.caption(f"💰 Estimated cost: ~${estimated_cost:.4f}")
-
-    # Display conversation history
-    if st.session_state.conversation_history:
-        st.markdown("---")
-        st.subheader("📜 Conversation History")
-
-        # Show most recent first
-        for i, item in enumerate(reversed(st.session_state.conversation_history)):
-            # Calculate original index for deletion
-            original_index = len(st.session_state.conversation_history) - 1 - i
-
-            timestamp = item['timestamp']
-            question_text = item['question']
-            response_text = item['response']
-
-            with st.expander(f"🕐 {timestamp} - {question_text[:60]}{'...' if len(question_text) > 60 else ''}"):
-                st.markdown(f"**Question:** {question_text}")
-                st.markdown("**Answer:**")
-                st.markdown(response_text)
-
-                # Delete button for individual conversation
-                if st.button("🗑️ Delete this conversation", key=f"delete_{original_index}"):
-                    st.session_state.conversation_history.pop(original_index)
-                    st.rerun()
-
+    
     st.markdown("---")
-
+    
     # Quick stats for manual exploration
     st.subheader("Quick Data Exploration")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        if st.button("Show Random Sample (10 rows)"):
-            st.dataframe(df.sample(min(10, len(df))))
-
-    with col2:
-        st.metric("Total Rows in Dataset", f"{len(df):,}")
-
+    
+    # Show random sample
+    if st.button("Show Random Sample (10 rows)"):
+        st.dataframe(df.sample(min(10, len(df))))
+    
     # Export options
-    st.subheader("Export Data")
+st.subheader("Export Data")
 
-    col1, col2 = st.columns(2)
+col1, col2 = st.columns(2)
 
-    with col1:
+with col1:
+    # Create CSV from the dataframe passed to this function
+    try:
+        csv_data = df.to_csv(index=False)
+        st.download_button(
+            label="Download Filtered Data as CSV",
+            data=csv_data,
+            file_name=f"trading_data_export_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
+    except NameError:
+        st.error("Data not available for export")
+
+with col2:
+    if 'realised_pnl' in df.columns:
         try:
-            csv_data = df.to_csv(index=False)
+            summary_df = df.groupby('product').agg({
+                'product': 'count',
+                'realised_pnl': ['sum', 'mean']
+            }).reset_index()
+            summary_csv = summary_df.to_csv(index=False)
             st.download_button(
-                label="📥 Download Filtered Data as CSV",
-                data=csv_data,
-                file_name=f"trading_data_export_{datetime.now().strftime('%Y%m%d')}.csv",
+                label="Download Product Summary",
+                data=summary_csv,
+                file_name=f"product_summary_{datetime.now().strftime('%Y%m%d')}.csv",
                 mime="text/csv"
             )
         except Exception as e:
-            st.error(f"Cannot export data: {e}")
-
-    with col2:
-        if 'realised_pnl' in df.columns:
-            try:
-                summary_df = df.groupby('product').agg({
-                    'product': 'count',
-                    'realised_pnl': ['sum', 'mean']
-                }).reset_index()
-                summary_csv = summary_df.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download Product Summary",
-                    data=summary_csv,
-                    file_name=f"product_summary_{datetime.now().strftime('%Y%m%d')}.csv",
-                    mime="text/csv"
-                )
-            except Exception as e:
-                st.error(f"Cannot create product summary: {e}")
+            st.error(f"Cannot create product summary: {e}")
 
 
 if __name__ == "__main__":
